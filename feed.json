@@ -1,13 +1,13 @@
 {
   "symbol": "GLD",
-  "spot": 389.64,
-  "iv_atm": 0.254431,
-  "iv_30d": 0.2386,
+  "spot": 390.08,
+  "iv_atm": 0.247446,
+  "iv_30d": 0.237063,
   "iv_30d_interpolated": true,
-  "rv_20d_gld": 0.2519,
-  "vrp_reference": -0.0133,
+  "rv_20d_gld": 0.250159,
+  "vrp_reference": -0.013096,
   "expiry": "2026-08-14",
   "days_to_expiry": 8,
-  "updated_utc": "2026-08-06T12:08:41Z",
+  "updated_utc": "2026-08-06T15:24:15Z",
   "source": "option chain, implied volatility solved from market prices"
 }
