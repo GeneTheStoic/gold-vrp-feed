@@ -8,20 +8,31 @@ WHY THIS EXISTS
     script computes it outside, from a free public option chain, and writes one small
     JSON object that any MQL5 program can read over HTTP.
 
+WHAT THIS IS, METHODOLOGICALLY
+    A practical proxy, not a full academic measurement. In strict academic usage the
+    variance risk premium is defined on variance, not on a simple volatility
+    difference. This feed publishes the applied version: near-the-money implied
+    volatility at a 30-day horizon against 30-session realized volatility. GLD options
+    are used as a liquid, freely quoted proxy for gold volatility expectations; they
+    are not identical to options on spot gold.
+
 WHY IT SOLVES FOR IMPLIED VOLATILITY INSTEAD OF READING IT
     Option chains usually ship an implied volatility column. For gold that column
     reported 0.20 percent, and on some contracts 0.00 percent, while the prices of those
     same contracts implied about 22 percent. So we ignore that column and solve
     Black-Scholes backwards from the price the market is actually paying, which is what
-    implied volatility means in the first place.
+    implied volatility means in the first place. The inversion is an approximation: it
+    treats the options as European, uses a flat short-rate, and reads only the
+    near-the-money slice of the surface. For short-dated near-ATM contracts feeding a
+    monitor, that is a reasonable engineering compromise.
 
 WHAT IT COMPUTES
     spot                  current price of GLD, the gold ETF whose options we read
     iv_atm                at-the-money implied volatility of the nearest usable expiry
-    iv_30d                the same, interpolated to a 30-day horizon
+    iv_30d                the same at a 30-day horizon, interpolated in total variance
     iv_30d_interpolated   true when a real interpolation happened
-    rv_20d_gld            realized volatility of GLD over the last 20 sessions
-    vrp_reference         iv_30d - rv_20d_gld, in volatility points, as a sanity check
+    rv_30d_gld            realized volatility of GLD over the last 30 sessions
+    vrp_reference         iv_30d - rv_30d_gld, in volatility points, as a sanity check
     plus the expiry used, days to expiry, and a UTC timestamp
 
 USAGE
@@ -41,7 +52,7 @@ import pandas as pd
 import yfinance as yf
 
 TICKER = "GLD"          # gold ETF: liquid options, no dividend, quoted in dollars
-RV_WINDOW = 20          # sessions used for realized volatility
+RV_WINDOW = 30          # sessions of realized volatility, matches the 30-day implied horizon
 TRADING_DAYS = 252      # annualization factor for realized volatility
 RISK_FREE = 0.04        # short-rate approximation; at-the-money IV barely moves with it
 MIN_OI = 10             # ignore contracts with almost no open interest
@@ -116,8 +127,9 @@ def atm_iv_for_expiry(tk, expiry, spot, t_years, debug=False):
     """
     Average the implied volatility of the call and the put nearest the money.
 
-    Using both sides cancels most of the skew between puts and calls, so the result
-    reads as expected movement rather than as directional positioning.
+    Using both sides reduces one-sided distortions and gives a more balanced
+    at-the-money proxy. It does not remove skew from the surface; it only keeps the
+    reading from leaning on whichever side happens to be richer.
     """
     chain = tk.option_chain(expiry)
     results = []
@@ -176,7 +188,9 @@ def build_feed(debug=False) -> dict:
     candidates.sort()
     near_days, near_expiry, near_iv = candidates[0]
 
-    # interpolate linearly in time between the expiries straddling 30 days
+    # interpolate in total variance (sigma squared times time) between the expiries
+    # straddling 30 days, then convert back to volatility; implied volatility is not
+    # linear in time, while total variance interpolates more faithfully
     iv_30d = near_iv
     interpolated = False
     before = [c for c in candidates if c[0] <= 30]
@@ -185,8 +199,11 @@ def build_feed(debug=False) -> dict:
         lo_days, _, lo_iv = before[-1]
         hi_days, _, hi_iv = after[0]
         if hi_days > lo_days:
+            lo_var = lo_iv * lo_iv * lo_days
+            hi_var = hi_iv * hi_iv * hi_days
             weight = (30 - lo_days) / (hi_days - lo_days)
-            iv_30d = lo_iv + weight * (hi_iv - lo_iv)
+            var_30d = lo_var + weight * (hi_var - lo_var)
+            iv_30d = math.sqrt(var_30d / 30.0)
             interpolated = True
         else:
             iv_30d = lo_iv
@@ -197,7 +214,7 @@ def build_feed(debug=False) -> dict:
         "iv_atm": round(near_iv, 6),
         "iv_30d": round(iv_30d, 6),
         "iv_30d_interpolated": interpolated,
-        "rv_20d_gld": None if math.isnan(rv) else round(rv, 6),
+        "rv_30d_gld": None if math.isnan(rv) else round(rv, 6),
         "vrp_reference": None if math.isnan(rv) else round(iv_30d - rv, 6),
         "expiry": near_expiry,
         "days_to_expiry": near_days,
@@ -224,12 +241,12 @@ def main() -> int:
         print(f"\nwritten to {args.out}")
 
     iv = feed["iv_30d"] * 100
-    rv = feed["rv_20d_gld"]
+    rv = feed["rv_30d_gld"]
     horizon = "interpolated to 30 days" if feed["iv_30d_interpolated"] else \
               f"nearest expiry, {feed['days_to_expiry']} days"
     print(f"\n30-day implied volatility: {iv:.2f}%  ({horizon})")
     if rv is not None:
-        print(f"20-day realized volatility (GLD): {rv * 100:.2f}%")
+        print(f"30-day realized volatility (GLD): {rv * 100:.2f}%")
         print(f"reference premium: {feed['vrp_reference'] * 100:+.2f} volatility points")
     return 0
 
