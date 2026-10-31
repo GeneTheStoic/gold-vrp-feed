@@ -8,6 +8,6 @@
   "vrp_reference": 0.015467,
   "expiry": "2026-11-13",
   "days_to_expiry": 13,
-  "updated_utc": "2026-10-31T17:37:34Z",
+  "updated_utc": "2026-10-31T21:23:16Z",
   "source": "option chain, implied volatility solved from market prices"
 }
